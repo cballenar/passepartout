@@ -112,8 +112,8 @@ body {
   align-items: center;
   padding: var(--header-height) 2em var(--footer-height);
   background-color: #FFFAF0;
-  background-image: url(/texture-wall-a.png);
-  background-size: 800px;
+  background-image: url(/texture-wall-a.webp);
+  background-size: 600px;
   background-repeat: repeat;
   background-position: center;
   position: relative;
@@ -154,7 +154,7 @@ body {
   margin-inline: auto;
   background-color: burlywood;
   padding: 1em;
-  background-image: url(/texture-wood-a.png);
+  background-image: url(/texture-wood-a.webp);
   background-size: 100% 100%;
   background-repeat: no-repeat;
   background-position: center;
@@ -185,8 +185,8 @@ body {
     height: 100%;
     inset: 0;
     opacity: .5;
-    background-image: url(/texture-wall-a.png);
-    background-size: 600px;
+    background-image: url(/texture-wall-a.webp);
+    background-size: 800px;
     background-repeat: repeat;
     background-position: center;
   }
@@ -203,10 +203,10 @@ body {
     height: 100%;
     inset: 0;
     opacity: .3;
-    background-image: url(/texture-canvas-a.png);
+    background-image: url(/texture-canvas-a.webp);
     z-index: 1;
   }
-  &:has([src^='/shim.png'])::after {
+  &:has([src^='/shim.gif'])::after {
     pointer-events: none;
     content: 'Select an Image';
     text-align: center;
@@ -225,7 +225,7 @@ body {
   border-width: .125em;
   border-color: rgba(0 0 0 / .1) rgba(255 255 255 / .3) rgba(255 255 255 / .3) rgba(0 0 0 / .1);
 
-  &[src^='/shim.png'] {
+  &[src^='/shim.gif'] {
     width: 100px;
     height: 100px;
   }

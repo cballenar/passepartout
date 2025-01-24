@@ -10,7 +10,7 @@ export default function Home() {
       mattWidth={useSignal(30)}
       mattColor={useSignal("#FAF0E6")}
       pictureWidth={useSignal(100)}
-      imageSrc={useSignal("/shim.png")}
+      imageSrc={useSignal("/shim.gif")}
       aspectRatio={useSignal("auto")}
     />
   );
