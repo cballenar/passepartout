@@ -1,5 +1,5 @@
 import type { Signal } from "@preact/signals";
-import { useState } from "preact/hooks";
+import { useState, useRef, useEffect } from "preact/hooks";
 
 interface FrameProps {
   frameWidth: Signal<number>;
@@ -15,6 +15,17 @@ interface FrameProps {
 export default function Framer(props: FrameProps) {
     const [imageSrc, setImageSrc] = useState(props.imageSrc.value);
     const [aspectRatio, setAspectRatio] = useState("auto");
+    const [rotation, setRotation] = useState(0);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [dragging, setDragging] = useState(false);
+    const [startDrag, setStartDrag] = useState({ x: 0, y: 0 });
+    const [size, setSize] = useState(props.pictureWidth.value);
+    const [imageZoom, setImageZoom] = useState(1);
+    const imgRef = useRef<HTMLImageElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Track if user has uploaded an image
+    const [hasUploaded, setHasUploaded] = useState(false);
 
     const handleFileChange = (e: Event) => {
         const target = e.target as HTMLInputElement;
@@ -24,6 +35,7 @@ export default function Framer(props: FrameProps) {
             reader.onload = (event) => {
                 setImageSrc(event.target?.result as string);
                 props.imageSrc.value = event.target?.result as string;
+                setHasUploaded(true); // Mark as uploaded
             };
             reader.readAsDataURL(file);
         }
@@ -33,16 +45,190 @@ export default function Framer(props: FrameProps) {
         document.getElementById("fieldUpload")?.click();
     };
 
+    // --- Rotation improvements ---
+    // Limit slider to +/- 45deg RELATIVE to current base rotation
+    const [baseRotation, setBaseRotation] = useState(0);
+    const [sliderDelta, setSliderDelta] = useState(0);
+    const ROTATE_LIMIT = 45;
+    // Rotate by +90/-90 buttons
+    const rotateBy = (deg: number) => {
+        setBaseRotation((prev) => {
+            let newBase = prev + deg;
+            // Keep in -180..180 for UI sanity
+            if (newBase > 180) newBase -= 360;
+            if (newBase < -180) newBase += 360;
+            return newBase;
+        });
+        setSliderDelta(0); // Reset slider to 0 after button rotation
+    };
+    // Slider handler: only affects delta, not base
+    const onRotate = (e: InputEvent) => {
+        const delta = parseInt((e.target as HTMLInputElement).value);
+        setSliderDelta(delta);
+    };
+    // The actual rotation is base + slider
+    useEffect(() => {
+        setRotation(baseRotation + sliderDelta);
+    }, [baseRotation, sliderDelta]);
+    // --- Centering and bounds ---
+    // Helper: get rotated bounding box size
+    function getRotatedSize(width: number, height: number, angleDeg: number) {
+        const angle = Math.abs(angleDeg) * Math.PI / 180;
+        const sin = Math.abs(Math.sin(angle));
+        const cos = Math.abs(Math.cos(angle));
+        return {
+            w: width * cos + height * sin,
+            h: width * sin + height * cos
+        };
+    }
+    // Clamp so the entire image stays inside the canvas (with rotation)
+    function clampPositionFull(x: number, y: number, imgW: number, imgH: number, rot: number, canvasW: number, canvasH: number) {
+        const { w: boxW, h: boxH } = getRotatedSize(imgW, imgH, rot);
+        // The image is centered at (x, y) relative to canvas center
+        const minX = -(boxW/2 - canvasW/2);
+        const maxX = (boxW/2 - canvasW/2);
+        const minY = -(boxH/2 - canvasH/2);
+        const maxY = (boxH/2 - canvasH/2);
+        return {
+            x: Math.max(Math.min(x, minX), -maxX),
+            y: Math.max(Math.min(y, minY), -maxY)
+        };
+    }
+    // --- Canvas size refs ---
+    const [canvasSize, setCanvasSize] = useState({ w: 400, h: 400 });
+    const canvasRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const update = () => {
+            if (canvasRef.current) {
+                const rect = canvasRef.current.getBoundingClientRect();
+                setCanvasSize({ w: rect.width, h: rect.height });
+            }
+        };
+        update();
+        window.addEventListener('resize', update);
+        return () => window.removeEventListener('resize', update);
+    }, []);
+    // --- Move handlers (mouse & touch) with bounds ---
+    const [moveActive, setMoveActive] = useState(false);
+    const [resizeActive, setResizeActive] = useState(false);
+    const [moveStart, setMoveStart] = useState({ x: 0, y: 0 });
+    const [moveOrigin, setMoveOrigin] = useState({ x: 0, y: 0 });
+    const [resizeStart, setResizeStart] = useState({ x: 0, zoom: 1 });
+    // Move start
+    const onPointerDown = (e: PointerEvent | TouchEvent) => {
+        if (resizeActive) return;
+        setMoveActive(true);
+        let clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
+        let clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
+        setMoveStart({ x: clientX, y: clientY });
+        setMoveOrigin({ ...position });
+        if ('touches' in e) e.preventDefault();
+    };
+    // Move
+    const onPointerMove = (e: PointerEvent | TouchEvent) => {
+        if (moveActive) {
+            let clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
+            let clientY = 'touches' in e ? e.touches[0].clientY : (e as PointerEvent).clientY;
+            let dx = clientX - moveStart.x;
+            let dy = clientY - moveStart.y;
+            // Calculate image size in px
+            let emPx = 16; // 1em = 16px (default)
+            let imgW = (props.pictureWidth.value / 10) * imageZoom * emPx;
+            let imgH = imgW / parseAspectRatio(aspectRatio);
+            let { w: canvasW, h: canvasH } = canvasSize;
+            let newPos = { x: moveOrigin.x + dx, y: moveOrigin.y + dy };
+            let clamped = clampPositionFull(newPos.x, newPos.y, imgW, imgH, rotation, canvasW, canvasH);
+            setPosition(clamped);
+            if ('touches' in e) e.preventDefault();
+        } else if (resizeActive) {
+            let clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
+            let delta = clientX - resizeStart.x;
+            let sensitivity = 0.005;
+            let newZoom = Math.max(0.1, Math.min(5, resizeStart.zoom + delta * sensitivity));
+            setImageZoom(newZoom);
+            // Clamp position after zoom
+            let emPx = 16;
+            let imgW = (props.pictureWidth.value / 10) * newZoom * emPx;
+            let imgH = imgW / parseAspectRatio(aspectRatio);
+            let { w: canvasW, h: canvasH } = canvasSize;
+            let clamped = clampPositionFull(position.x, position.y, imgW, imgH, rotation, canvasW, canvasH);
+            setPosition(clamped);
+            if ('touches' in e) e.preventDefault();
+        }
+    };
+    const onPointerUp = () => {
+        setMoveActive(false);
+        setResizeActive(false);
+    };
+    // Resize handle
+    const onResizeDown = (e: PointerEvent | TouchEvent) => {
+        if (moveActive) return;
+        setResizeActive(true);
+        let clientX = 'touches' in e ? e.touches[0].clientX : (e as PointerEvent).clientX;
+        setResizeStart({ x: clientX, zoom: imageZoom });
+        if ('touches' in e) e.preventDefault();
+    };
+    // --- Aspect ratio parser ---
+    function parseAspectRatio(ratio: string): number {
+        if (ratio === 'auto') return 1.6; // Default fallback
+        if (ratio.includes('/')) {
+            const [num, denom] = ratio.split('/').map(Number);
+            if (!isNaN(num) && !isNaN(denom) && denom !== 0) return num / denom;
+        }
+        const asNum = Number(ratio);
+        if (!isNaN(asNum) && asNum > 0) return asNum;
+        return 1.6;
+    }
+    // --- Render ---
     return (
-        <div className="framer" style={`background-color: ${props.wallColor.value};`}>
+        <div
+            className="framer"
+            style={`background-color: ${props.wallColor.value};`}
+            ref={containerRef}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerLeave={onPointerUp}
+            onTouchMove={onPointerMove}
+            onTouchEnd={onPointerUp}
+            onTouchCancel={onPointerUp}
+        >
             <div className="frame" style={`background-color: ${props.frameColor.value}; padding: ${props.frameWidth.value/10}em;`}>
                 <div className="matt" style={`background-color: ${props.mattColor.value}; padding: ${props.mattWidth.value/10}em;`}>
-                    <div className="canvas">
-                        <img src={imageSrc} style={`width: ${props.pictureWidth.value/10}em; aspect-ratio: ${aspectRatio};`} onClick={handleImageClick} />
+                    <div className="canvas" ref={canvasRef} style="position:relative; touch-action:none; min-width: 120px; min-height: 120px; overflow:hidden; width: ${(props.pictureWidth.value)}em; height: auto;">
+                        <img
+                            ref={imgRef}
+                            src={imageSrc}
+                            style={`width: ${props.pictureWidth.value/10 * imageZoom}em; aspect-ratio: ${aspectRatio}; transform: translate(${position.x}px,${position.y}px) rotate(${rotation}deg); touch-action:none; cursor: ${imageSrc && !imageSrc.endsWith('/shim.gif') ? (moveActive ? 'grabbing' : 'grab') : 'pointer'}; max-width: 100vw; max-height: 60vh; pointer-events: ${imageSrc && !imageSrc.endsWith('/shim.gif') ? 'auto' : 'none'};`}
+                            onPointerDown={imageSrc && !imageSrc.endsWith('/shim.gif') ? onPointerDown : undefined}
+                            onTouchStart={imageSrc && !imageSrc.endsWith('/shim.gif') ? onPointerDown : undefined}
+                            draggable={false}
+                            className={!imageSrc || imageSrc.endsWith('/shim.gif') ? 'img-upload-prompt' : ''}
+                        />
+                        {/* Resize handle (bottom right corner) */}
+                        {imageSrc && !imageSrc.endsWith('/shim.gif') && (
+                            <div
+                                style="position:absolute; right:0; bottom:0; width:32px; height:32px; background:#fff8; border-radius:50%; cursor: nwse-resize; display:flex; align-items:center; justify-content:center; z-index:2; touch-action:none;"
+                                onPointerDown={onResizeDown}
+                                onTouchStart={onResizeDown}
+                            >↔️</div>
+                        )}
                     </div>
                 </div>
             </div>
-
+            {/* Upload button below the frame */}
+            <div style="display: flex; justify-content: center; margin: 1em 0;">
+                <button type="button" onClick={handleImageClick}>
+                    {(!imageSrc || imageSrc.endsWith('/shim.gif')) ? 'Upload Image' : 'Replace Image'}
+                </button>
+            </div>
+            {/* Rotation slider and buttons */}
+            <div style="margin: 1em 0; display: flex; align-items: center; gap: 1em;">
+                <label htmlFor="rotateSlider">Rotate</label>
+                <input id="rotateSlider" type="range" min={-ROTATE_LIMIT} max={ROTATE_LIMIT} value={sliderDelta} onInput={onRotate} />
+                <button type="button" onClick={() => rotateBy(-90)} title="Rotate -90°">⟲ -90°</button>
+                <button type="button" onClick={() => rotateBy(90)} title="Rotate +90°">⟳ +90°</button>
+                <span>{rotation}°</span>
+            </div>
             <form action="post">
                 <fieldset>
                     <legend>Frame</legend>
